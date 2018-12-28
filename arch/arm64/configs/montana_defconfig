@@ -566,7 +566,7 @@ CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y
 # CPU frequency scaling drivers
 #
 # CONFIG_CPUFREQ_DT is not set
-# CONFIG_CPU_BOOST is not set
+CONFIG_CPU_BOOST=y
 
 #
 # ARM CPU frequency scaling drivers
@@ -4234,7 +4234,7 @@ CONFIG_MMI_DEVICE_DTBS=y
 # CONFIG_ALI_DTB is not set
 # CONFIG_DEEN_DTB is not set
 # CONFIG_CEDRIC_DTB is not set
-# CONFIG_MONTANA_DTB is not set
+CONFIG_MONTANA_DTB=y
 # CONFIG_PERRY_DTB is not set
 # CONFIG_JAMES_DTB is not set
 # CONFIG_PETTYL_DTB is not set
