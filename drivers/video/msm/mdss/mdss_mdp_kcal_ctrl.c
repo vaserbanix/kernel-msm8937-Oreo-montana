@@ -165,7 +165,8 @@ static int mdss_mdp_kcal_display_commit(void)
 	for (i = 0; i < mdata->nctl; i++) {
 		ctl = mdata->ctl_off + i;
 		/* pp setup requires mfd */
-		if ((mdss_mdp_ctl_is_power_on(ctl)) && (ctl->mfd)) {
+		if (mdss_mdp_ctl_is_power_on(ctl) && ctl->mfd &&
+				ctl->mfd->index == 0) {
 			ret = mdss_mdp_pp_setup(ctl);
 			if (ret)
 				pr_err("%s: setup failed: %d\n", __func__, ret);
@@ -177,10 +178,10 @@ static int mdss_mdp_kcal_display_commit(void)
 
 static void mdss_mdp_kcal_update_pcc(struct kcal_lut_data *lut_data)
 {
-	u32 copyback = 0;
+	/*u32 copyback = 0;*/
 	struct mdp_pcc_cfg_data pcc_config;
 
-	struct mdp_pcc_data_v1_7 *payload;
+	memset(&pcc_config, 0, sizeof(struct mdp_pcc_cfg_data));
 
 	lut_data->red = lut_data->red < lut_data->minimum ?
 		lut_data->minimum : lut_data->red;
@@ -200,15 +201,38 @@ static void mdss_mdp_kcal_update_pcc(struct kcal_lut_data *lut_data)
 	pcc_config.g.g = lut_data->green * PCC_ADJ;
 	pcc_config.b.b = lut_data->blue * PCC_ADJ;
 
-	payload = kzalloc(sizeof(struct mdp_pcc_data_v1_7),GFP_USER);
-	payload->r.r = pcc_config.r.r;
-	payload->g.g = pcc_config.g.g;
-	payload->b.b = pcc_config.b.b;
-	pcc_config.cfg_payload = payload;
+	if (lut_data->invert) {
+		pcc_config.r.c = pcc_config.g.c =
+			pcc_config.b.c = 0x7ff8;
+		pcc_config.r.r |= (0xffff << 16);
+		pcc_config.g.g |= (0xffff << 16);
+		pcc_config.b.b |= (0xffff << 16);
+	}
 
-	if (!mdss_mdp_kcal_store_fb0_ctl()) return;
-	mdss_mdp_pcc_config(fb0_ctl->mfd, &pcc_config, &copyback);
-	kfree(payload);
+	/*mdss_mdp_pcc_config(&pcc_config, &copyback);*/
+}
+
+static void mdss_mdp_kcal_read_pcc(struct kcal_lut_data *lut_data)
+{
+	/*u32 copyback = 0;*/
+	struct mdp_pcc_cfg_data pcc_config;
+
+	memset(&pcc_config, 0, sizeof(struct mdp_pcc_cfg_data));
+
+	pcc_config.block = MDP_LOGICAL_BLOCK_DISP_0;
+	pcc_config.ops = MDP_PP_OPS_READ;
+
+	/*mdss_mdp_pcc_config(&pcc_config, &copyback);*/
+
+	/* LiveDisplay disables pcc when using default values and regs
+	 * are zeroed on pp resume, so throw these values out.
+	 */
+	if (!pcc_config.r.r && !pcc_config.g.g && !pcc_config.b.b)
+		return;
+
+	lut_data->red = (pcc_config.r.r & 0xffff) / PCC_ADJ;
+	lut_data->green = (pcc_config.g.g & 0xffff) / PCC_ADJ;
+	lut_data->blue = (pcc_config.b.b & 0xffff) / PCC_ADJ;
 }
 
 static void mdss_mdp_kcal_update_pa(struct kcal_lut_data *lut_data)
@@ -307,8 +331,8 @@ static ssize_t kcal_store(struct device *dev, struct device_attribute *attr,
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
 
 	r = sscanf(buf, "%d %d %d", &kcal_r, &kcal_g, &kcal_b);
-	if ((r != 3) || (kcal_r < 0 || kcal_r > 256) ||
-		(kcal_g < 0 || kcal_g > 256) || (kcal_b < 0 || kcal_b > 256))
+	if ((r != 3) || (kcal_r < 1 || kcal_r > 256) ||
+		(kcal_g < 1 || kcal_g > 256) || (kcal_b < 1 || kcal_b > 256))
 		return -EINVAL;
 
 	lut_data->red = kcal_r;
@@ -326,6 +350,8 @@ static ssize_t kcal_show(struct device *dev, struct device_attribute *attr,
 {
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
 
+	mdss_mdp_kcal_read_pcc(lut_data);
+
 	return scnprintf(buf, PAGE_SIZE, "%d %d %d\n",
 		lut_data->red, lut_data->green, lut_data->blue);
 }
@@ -337,7 +363,7 @@ static ssize_t kcal_min_store(struct device *dev,
 	struct kcal_lut_data *lut_data = dev_get_drvdata(dev);
 
 	r = kstrtoint(buf, 10, &kcal_min);
-	if ((r) || (kcal_min < 0 || kcal_min > 256))
+	if ((r) || (kcal_min < 1 || kcal_min > 256))
 		return -EINVAL;
 
 	lut_data->minimum = kcal_min;
@@ -371,7 +397,7 @@ static ssize_t kcal_enable_store(struct device *dev,
 
 	mdss_mdp_kcal_update_pcc(lut_data);
 	mdss_mdp_kcal_update_pa(lut_data);
-	//mdss_mdp_kcal_update_igc(lut_data);
+	mdss_mdp_kcal_update_igc(lut_data);
 	mdss_mdp_kcal_display_commit();
 
 	return count;
@@ -396,11 +422,10 @@ static ssize_t kcal_invert_store(struct device *dev,
 		(lut_data->invert == kcal_invert))
 		return -EINVAL;
 
-	//disable
-	lut_data->invert = 0;
+	lut_data->invert = kcal_invert;
 
-	//mdss_mdp_kcal_update_igc(lut_data);
-	//mdss_mdp_kcal_display_commit();
+	mdss_mdp_kcal_update_pcc(lut_data);
+	mdss_mdp_kcal_display_commit();
 
 	return count;
 }
